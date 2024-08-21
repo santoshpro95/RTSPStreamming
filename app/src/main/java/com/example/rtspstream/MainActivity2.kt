@@ -5,6 +5,7 @@ import android.content.Context
 
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
@@ -60,9 +61,11 @@ class MainActivity2 : AppCompatActivity() {
         // Execute FFmpeg command
         FFmpeg.executeAsync(rtspCommand) { _, returnCode ->
             if (returnCode == 0) {
+                Log.i("RTSP Streamming", "Started Successfully")
                 // Streaming started successfully
             } else {
                 // Streaming failed
+                Log.i("RTSP Streamming", "Failed")
             }
         }
     }
