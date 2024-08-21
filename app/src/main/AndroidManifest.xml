@@ -24,7 +24,7 @@
         android:theme="@style/Theme.RtspStream"
         tools:targetApi="31">
         <activity
-            android:name=".MainActivity"
+            android:name=".MainActivity2"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

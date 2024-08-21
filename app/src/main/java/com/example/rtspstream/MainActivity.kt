@@ -38,7 +38,7 @@ class MainActivity :  AppCompatActivity(),  SurfaceHolder.Callback{
         setContentView(R.layout.activity_main)
 
         // Initialize SurfaceView
-        surfaceView = findViewById(R.id.surfaceView)
+       // surfaceView = findViewById(R.id.surfaceView)
         surfaceHolder = surfaceView.holder
         surfaceHolder.addCallback(this)
         surfaceHolder.setFixedSize(320, 240);
