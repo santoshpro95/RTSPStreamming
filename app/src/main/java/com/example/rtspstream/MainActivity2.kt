@@ -27,8 +27,6 @@ class MainActivity2 : AppCompatActivity() {
 
 
         requestPermissions()
-
-
     }
 
     private fun startCamera() {
@@ -65,7 +63,7 @@ class MainActivity2 : AppCompatActivity() {
                 // Streaming started successfully
             } else {
                 // Streaming failed
-                Log.i("RTSP Streamming", "Failed")
+                Log.i("RTSP Streamming", "Failed $returnCode")
             }
         }
     }

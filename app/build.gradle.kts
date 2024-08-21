@@ -44,7 +44,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
-    implementation("org.videolan.android:libvlc-all:3.3.13")
+//    implementation("org.videolan.android:libvlc-all:3.3.13")
 
     implementation ("androidx.camera:camera-core:1.1.0")
     implementation ("androidx.camera:camera-camera2:1.1.0")
