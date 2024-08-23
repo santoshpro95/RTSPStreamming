@@ -2,7 +2,15 @@ package com.example.rtspstream
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.ImageFormat
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.media.ImageReader
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,6 +20,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.arthenica.mobileffmpeg.FFmpeg
 import java.io.File
@@ -20,70 +29,150 @@ import java.io.InputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.SocketException
+import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 
 
 class MainActivity2 : AppCompatActivity() {
     private lateinit var viewFinder: PreviewView
+    private lateinit var cameraDevice: CameraDevice
+    private lateinit var captureSession: CameraCaptureSession
+    private lateinit var imageReader: ImageReader
+    private lateinit var backgroundHandler: Handler
+    private val cameraId = "0"  // The ID of the camera (usually "0" for the back camera)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         // Initialize the PreviewView
-       // viewFinder = findViewById(R.id.viewFinder)
-        localFileStreaming()
+        // viewFinder = findViewById(R.id.viewFinder)
+        // localFileStreaming()
+      // val vidFile = copyRawResourceToInternalStorage(this, R.raw.demo, "demo.mp4")
+//        val vidFile = File("/data/user/0/com.example.rtspstream/files/", "frame.mp4");
+//       startFFmpeg(vidFile)
 
+        // Check and request camera permission
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 1)
+            return
+        }
 
-//        // Request camera and storage permissions
-//        val requestPermissionLauncher = registerForActivityResult(
-//            ActivityResultContracts.RequestMultiplePermissions()
-//        ) { permissions ->
-//            if (permissions[Manifest.permission.CAMERA] == true &&
-//                permissions[Manifest.permission.WRITE_EXTERNAL_STORAGE] == true) {
-//                startCamera()
-//            } else {
-//                // Permission denied, handle appropriately
-//            }
-//        }
-//
-//        requestPermissionLauncher.launch(
-//            arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-//        )
+        startCamera()
     }
 
-    private fun localFileStreaming(){
-        try {
-            val videoFile = copyRawResourceToInternalStorage(this, R.raw.demo, "demo.mp4")
+    private fun startCamera() {
+        val backgroundThread = HandlerThread("CameraBackground")
+        backgroundThread.start()
+        backgroundHandler = Handler(backgroundThread.looper)
 
-            val ipAddress = getLocalIpAddress()
-            Log.i("FFmpeg", "IPaddress == $ipAddress")
+        imageReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2)
+        imageReader.setOnImageAvailableListener(onImageAvailableListener, backgroundHandler)
 
+        val cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        cameraManager.openCamera(cameraId, cameraStateCallback, backgroundHandler)
+    }
 
-            val ffmpegCommand = arrayOf(
-                "-stream_loop", "10",
-                "-re",
-                "-i", videoFile.absolutePath, // Path to the video file in internal storage
-                "-f", "rtp_mpegts",
-                "rtp://192.168.1.101:1234"
-            )
+    private val cameraStateCallback = object : CameraDevice.StateCallback() {
+        override fun onOpened(camera: CameraDevice) {
+            cameraDevice = camera
+            createCameraPreviewSession()
+        }
 
-            FFmpeg.executeAsync(ffmpegCommand) { executionId, returnCode ->
-                if (returnCode == com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS) {
-                    Log.i("FFmpeg", "Stream started successfully.")
-                } else {
-                    Log.e("FFmpeg", "Stream failed with return code: $returnCode")
-                }
+        override fun onDisconnected(camera: CameraDevice) {
+            camera.close()
+        }
+
+        override fun onError(camera: CameraDevice, error: Int) {
+            camera.close()
+        }
+    }
+    private val onImageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
+        val image = reader.acquireLatestImage()
+        image?.let {
+            val width = image.width
+            val height = image.height
+
+            // Log the dimensions of the image
+            Log.d("ImageReader", "Captured image with width: $width, height: $height")
+
+            if (width > 0 && height > 0) {
+                val buffer: ByteBuffer = image.planes[0].buffer
+                val data = ByteArray(buffer.remaining())
+                buffer.get(data)
+
+                // Save the frame to a file
+                val frameFile = File(filesDir, "frame.jpeg")
+                saveFrameToFile(data, frameFile)
+
+                // Log the size of the saved file
+                Log.d("File", "Frame file size: ${frameFile.length()} bytes")
+
+                // Stream the saved frame using FFmpeg
+                startFFmpeg(frameFile)
+            } else {
+                Log.e("ImageReader", "Invalid image size: $width x $height")
             }
 
-        } catch (e: Exception) {
-            Log.i("FFmpeg error", e.toString())
-            e.printStackTrace()
+            image.close()
+        } ?: Log.e("ImageReader", "Image is null")
+    }
+
+
+    private fun saveFrameToFile(data: ByteArray, file: File) {
+        FileOutputStream(file).use { output ->
+            output.write(data)
+        }
+
+        if (file.length() == 0L) {
+            Log.e("File", "Frame file is empty, skipping FFmpeg command")
+        } else {
+            Log.d("File", "Frame file size: ${file.length()} bytes")
         }
     }
 
+    private fun createCameraPreviewSession() {
+        val surface = imageReader.surface
+        val captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+        captureRequestBuilder.addTarget(surface)
 
-    fun copyRawResourceToInternalStorage(context: Context, resourceId: Int, outputFileName: String): File {
+        cameraDevice.createCaptureSession(
+            listOf(surface),
+            object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) {
+                    captureSession = session
+                    captureSession.setRepeatingRequest(
+                        captureRequestBuilder.build(),
+                        null,
+                        backgroundHandler
+                    )
+                }
+
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    Log.e("CameraCaptureSession", "Configuration failed")
+                }
+            },
+            backgroundHandler
+        )
+    }
+
+
+    private fun copyRawResourceToInternalStorage(
+        context: Context,
+        resourceId: Int,
+        outputFileName: String
+    ): File {
         val inputStream: InputStream = context.resources.openRawResource(resourceId)
         val outputFile = File(context.filesDir, outputFileName)
 
@@ -94,104 +183,24 @@ class MainActivity2 : AppCompatActivity() {
         return outputFile
     }
 
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
-        cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.setSurfaceProvider(findViewById<PreviewView>(R.id.viewFinder).surfaceProvider)
-                }
-
-            val imageAnalysis = ImageAnalysis.Builder()
-                .setTargetResolution(Size(1280, 720))
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-
-            imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor(), ImageAnalysis.Analyzer { image ->
-                val buffer = image.planes[0].buffer
-                val data = ByteArray(buffer.remaining())
-                buffer.get(data)
-
-                // Pass this data to FFmpeg
-                streamToFFmpeg(data)
-
-                image.close()
-            })
-
-            try {
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis)
-            } catch (exc: Exception) {
-                Log.e("CameraX", "Use case binding failed", exc)
-            }
-
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    private fun streamToFFmpeg(data: ByteArray) {
-        val pipe = File(filesDir, "ffmpegpipe")
-        if (!pipe.exists()) {
-            Runtime.getRuntime().exec("mkfifo ${pipe.absolutePath}")
-            startFFmpeg(pipe)
-        }
-
-        FileOutputStream(pipe).use { outputStream ->
-            outputStream.write(data)
-            outputStream.flush()
-        }
-    }
-
-    fun getLocalIpAddress(): String? {
-        try {
-            val en = NetworkInterface.getNetworkInterfaces()
-            while (en.hasMoreElements()) {
-                val intf = en.nextElement()
-                val enumIpAddr = intf.inetAddresses
-                while (enumIpAddr.hasMoreElements()) {
-                    val inetAddress = enumIpAddr.nextElement()
-                    if (!inetAddress.isLoopbackAddress && inetAddress is Inet4Address) {
-                        return inetAddress.getHostAddress()
-                    }
-                }
-            }
-        } catch (ex: SocketException) {
-            ex.printStackTrace()
-        }
-        return null
-    }
     private fun startFFmpeg(pipe: File) {
-        val ipAddress = getLocalIpAddress()
-        Log.i("FFmpeg", "IPaddress == $ipAddress")
-
-        //val rtspUrl = "rtsp://$ipAddress:port/stream"
+        Log.i("pipe == data", pipe.absolutePath)
 
         val ffmpegCommand = arrayOf(
-            "-pix_fmt", "yuv420p",
-            "-stream_loop", "10",
             "-re",
-            "-i", pipe.absolutePath,
+            "-i", pipe.absolutePath,  // Replace with actual file path
+            "-pix_fmt", "yuyv422",
+            "-maxrate", "2000k",
+            "-bufsize", "2000k",
+            "-acodec", "aac",
+            "-ar", "44100",
+            "-b:a", "128k",
             "-f", "rtp_mpegts",
-            "rtp://$ipAddress:1234"
+            "rtp://192.168.1.101:9988"
         )
 
-//        val ffmpegCommand = arrayOf(
-//            "-f", "rawvideo",                 // Format is raw video
-//            "-pix_fmt", "yuv420p",            // Pixel format, must match your input data
-//            "-s", "1280x720",                 // Frame size, ensure this matches your input
-//            "-r", "30",                       // Frame rate (frames per second)
-//            "-i", pipe.absolutePath,          // Input is the named pipe
-//            "-c:v", "libx264",                // Video codec to use
-//            "-preset", "ultrafast",           // Faster encoding preset
-//            "-f", "rtsp",                     // Output format is RTSP
-//            rtspUrl                           // RTSP server URL
-//        )
-
-        FFmpeg.executeAsync("ffmpeg -re -i ${pipe.absolutePath} -f rtp_mpegts rtp://$ipAddress:1234") { executionId, returnCode ->
+        FFmpeg.executeAsync(ffmpegCommand) { executionId, returnCode ->
             if (returnCode == com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS) {
                 Log.i("FFmpeg", "Stream started successfully.")
             } else {
